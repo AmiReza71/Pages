@@ -1,0 +1,36 @@
+name: Save webpage and extract download links
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: 'آدرس وب‌سایت مورد نظر'
+        required: true
+        type: string
+        default: 'https://example.com'
+
+jobs:
+  fetch-and-extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+
+      - name: Run script
+        run: |
+          python scripts/fetch_and_extract.py "${{ github.event.inputs.site_url }}"
+
+      - name: Upload results (اختیاری)
+        uses: actions/upload-artifact@v4
+        with:
+          name: saved-page-and-links
+          path: outputs/
