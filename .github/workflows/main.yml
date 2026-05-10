@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       site_url:
-        description: 'آدرس وب‌سایت مورد نظر'
+        description: 'آدرس وب‌سایت مورد نظر (مثال: https://example.com)'
         required: true
         type: string
         default: 'https://example.com'
@@ -12,25 +12,35 @@ on:
 jobs:
   fetch-and-extract:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout code
+      # مرحله 1: دریافت کدهای مخزن شما
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # مرحله 2: نصب پایتون نسخه مشخص
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'  # کش کردن وابستگی‌ها برای اجرای سریع‌تر دفعات بعد
 
-      - name: Install dependencies
+      # مرحله 3: نصب کتابخانه‌های مورد نیاز با pip
+      - name: Install Python dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install requests beautifulsoup4
 
-      - name: Run script
+      # مرحله 4: اجرای اسکریپت اصلی
+      - name: Run fetch and extract script
         run: |
           python scripts/fetch_and_extract.py "${{ github.event.inputs.site_url }}"
 
-      - name: Upload results (اختیاری)
+      # مرحله 5: آپلود خروجی‌ها به عنوان Artifact (قابل دانلود)
+      - name: Upload results
+        if: always()  # حتی اگر خطا هم بده، خروجی‌ها آپلود شوند
         uses: actions/upload-artifact@v4
         with:
           name: saved-page-and-links
           path: outputs/
+          retention-days: 7
