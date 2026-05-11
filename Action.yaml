@@ -1,0 +1,61 @@
+name: 'Google Drive Downloader'
+description: 'دانلود فایل از گوگل درایو با پایتون'
+inputs:
+  file_id:
+    description: 'شناسه فایل گوگل درایو'
+    required: true
+  output_path:
+    description: 'مسیر ذخیره فایل'
+    required: false
+    default: './downloads'
+  is_folder:
+    description: 'آیا پوشه است؟'
+    required: false
+    default: 'false'
+  filename:
+    description: 'نام فایل خروجی'
+    required: false
+    
+outputs:
+  download_path:
+    description: 'مسیر فایل دانلود شده'
+    value: ${{ steps.download.outputs.download_path }}
+  file_size:
+    description: 'حجم فایل دانلود شده'
+    value: ${{ steps.download.outputs.file_size }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install requests tqdm
+        
+    - name: Run download script
+      id: download
+      shell: bash
+      run: |
+        mkdir -p ${{ inputs.output_path }}
+        
+        if [ "${{ inputs.is_folder }}" = "true" ]; then
+          python ${{ github.action_path }}/download.py ${{ inputs.file_id }} \
+            --output ${{ inputs.output_path }} \
+            --folder
+        else
+          if [ -n "${{ inputs.filename }}" ]; then
+            python ${{ github.action_path }}/download.py ${{ inputs.file_id }} \
+              --output ${{ inputs.output_path }} \
+              --filename "${{ inputs.filename }}"
+          else
+            python ${{ github.action_path }}/download.py ${{ inputs.file_id }} \
+              --output ${{ inputs.output_path }}
+          fi
+        fi
+        
+        echo "download_path=${{ inputs.output_path }}" >> $GITHUB_OUTPUT
