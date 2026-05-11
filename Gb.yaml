@@ -1,0 +1,32 @@
+name: دانلود از گوگل درایو
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_id:
+        description: 'شناسه فایل'
+        required: true
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: دانلود با پایتون
+        run: |
+          python -c "
+import requests
+file_id = '${{ github.event.inputs.file_id }}'
+url = f'https://drive.usercontent.google.com/download?id={file_id}&confirm=xxx'
+response = requests.get(url, stream=True)
+with open('downloaded_file', 'wb') as f:
+    for chunk in response.iter_content(chunk_size=8192):
+        f.write(chunk)
+print('دانلود کامل شد')
+"
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: my-file
+          path: downloaded_file
