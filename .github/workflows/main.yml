@@ -1,86 +1,16 @@
-name: Download Any AAR from Maven
-
-on:
-  workflow_dispatch:
-    inputs:
-      dependency:
-        description: 'Maven dependency (مثال: com.squareup.picasso:picasso:2.8)'
-        required: true
-        default: 'com.squareup.picasso:picasso:2.8'
-        type: string
-
-jobs:
-  download-aar:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
-        with:
-          java-version: '11'
-          distribution: 'temurin'
-
-      - name: Parse dependency
-        id: parse
-        run: |
-          DEP="${{ github.event.inputs.dependency }}"
-          GROUP=$(echo $DEP | cut -d':' -f1)
-          ARTIFACT=$(echo $DEP | cut -d':' -f2)
-          VERSION=$(echo $DEP | cut -d':' -f3)
-          
-          echo "group=$GROUP" >> $GITHUB_OUTPUT
-          echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Create pom.xml for Android dependency
-        run: |
-          cat > pom.xml << EOF
-          <project>
-            <modelVersion>4.0.0</modelVersion>
-            <groupId>temp</groupId>
-            <artifactId>aar-downloader</artifactId>
-            <version>1.0</version>
-            <dependencies>
-              <dependency>
-                <groupId>${{ steps.parse.outputs.group }}</groupId>
-                <artifactId>${{ steps.parse.outputs.artifact }}</artifactId>
-                <version>${{ steps.parse.outputs.version }}</version>
-                <type>aar</type>
-              </dependency>
-            </dependencies>
-          </project>
-          EOF
-
-      - name: Download AAR using Maven
-        run: |
-          mvn dependency:copy-dependencies -DincludeTypes=aar -DoutputDirectory=./output
-
-      - name: Copy AAR file
-        run: |
-          cd output
-          AAR_FILE=$(ls *.aar 2>/dev/null | head -1)
-          if [ -z "$AAR_FILE" ]; then
-            echo "❌ هیچ فایل AAR پیدا نشد!"
-            exit 1
-          fi
-          cp "$AAR_FILE" ../${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}.aar
-          cd ..
-          echo "✅ دانلود شد: ${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}.aar"
-
-      - name: Upload AAR to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ./*.aar
-          tag_name: aar-${{ github.run_number }}
-          name: "${{ steps.parse.outputs.artifact }} v${{ steps.parse.outputs.version }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}
-          path: ./*.aar
+- name: Direct download with wget
+  run: |
+    GROUP_PATH=$(echo "${{ steps.parse.outputs.group }}" | tr '.' '/')
+    ARTIFACT="${{ steps.parse.outputs.artifact }}"
+    VERSION="${{ steps.parse.outputs.version }}"
+    URL="https://repo1.maven.org/maven2/${GROUP_PATH}/${ARTIFACT}/${VERSION}/${ARTIFACT}-${VERSION}.aar"
+    
+    echo "Downloading from: $URL"
+    wget "$URL" -O "${ARTIFACT}-${VERSION}.aar"
+    
+    if [ -f "${ARTIFACT}-${VERSION}.aar" ]; then
+      echo "✅ دانلود موفقیت‌آمیز بود"
+    else
+      echo "❌ دانلود失敗"
+      exit 1
+    fi
