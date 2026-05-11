@@ -1,16 +1,173 @@
-- name: Direct download with wget
-  run: |
-    GROUP_PATH=$(echo "${{ steps.parse.outputs.group }}" | tr '.' '/')
-    ARTIFACT="${{ steps.parse.outputs.artifact }}"
-    VERSION="${{ steps.parse.outputs.version }}"
-    URL="https://repo1.maven.org/maven2/${GROUP_PATH}/${ARTIFACT}/${VERSION}/${ARTIFACT}-${VERSION}.aar"
-    
-    echo "Downloading from: $URL"
-    wget "$URL" -O "${ARTIFACT}-${VERSION}.aar"
-    
-    if [ -f "${ARTIFACT}-${VERSION}.aar" ]; then
-      echo "✅ دانلود موفقیت‌آمیز بود"
-    else
-      echo "❌ دانلود失敗"
-      exit 1
-    fi
+name: Download Any AAR from Maven
+
+on:
+  workflow_dispatch:
+    inputs:
+      dependency:
+        description: 'Maven dependency (مثال: com.squareup.picasso:picasso:2.8)'
+        required: true
+        default: 'com.squareup.picasso:picasso:2.8'
+        type: string
+
+jobs:
+  download-aar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Parse dependency
+        id: parse
+        run: |
+          DEP="${{ github.event.inputs.dependency }}"
+          GROUP=$(echo $DEP | cut -d':' -f1)
+          ARTIFACT=$(echo $DEP | cut -d':' -f2)
+          VERSION=$(echo $DEP | cut -d':' -f3)
+          
+          echo "group=$GROUP" >> $GITHUB_OUTPUT
+          echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create pom.xml for Android dependency
+        run: |
+          cat > pom.xml << EOF
+          <project>
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>temp</groupId>
+            <artifactId>aar-downloader</artifactId>
+            <version>1.0</version>
+            <dependencies>
+              <dependency>
+                <groupId>${{ steps.parse.outputs.group }}</groupId>
+                <artifactId>${{ steps.parse.outputs.artifact }}</artifactId>
+                <version>${{ steps.parse.outputs.version }}</version>
+                <type>aar</type>
+              </dependency>
+            </dependencies>
+          </project>
+          EOF
+
+      - name: Download AAR using Maven (با ذخیره خطاها)
+        id: download
+        continue-on-error: true
+        run: |
+          mvn dependency:copy-dependencies -DincludeTypes=aar -DoutputDirectory=./output 2> maven-error.log
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Save Maven debug logs
+        if: always()
+        run: |
+          mkdir -p debug-logs
+          # ذخیره لاگ خطا
+          if [ -f maven-error.log ]; then
+            cp maven-error.log debug-logs/
+          fi
+          # ذخیره لاگ کامل Maven
+          mvn dependency:copy-dependencies -DincludeTypes=aar -DoutputDirectory=./output -X > debug-logs/maven-full-debug.log 2>&1 || true
+          # ذخیره اطلاعات محیط
+          echo "=== Java Version ===" > debug-logs/environment.txt
+          java -version >> debug-logs/environment.txt 2>&1
+          echo "=== Maven Version ===" >> debug-logs/environment.txt
+          mvn -version >> debug-logs/environment.txt 2>&1
+          # لیست فایل های دانلود شده
+          ls -la ./output/ >> debug-logs/files-list.txt 2>&1 || echo "No files in output" >> debug-logs/files-list.txt
+
+      - name: Try direct download with wget (راه جایگزین)
+        id: wget
+        continue-on-error: true
+        run: |
+          GROUP_PATH=$(echo "${{ steps.parse.outputs.group }}" | tr '.' '/')
+          ARTIFACT="${{ steps.parse.outputs.artifact }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          URL="https://repo1.maven.org/maven2/${GROUP_PATH}/${ARTIFACT}/${VERSION}/${ARTIFACT}-${VERSION}.aar"
+          
+          echo "Downloading from: $URL" > wget-log.txt
+          wget --no-check-certificate "$URL" -O "${ARTIFACT}-${VERSION}.aar" >> wget-log.txt 2>&1
+          
+          if [ -f "${ARTIFACT}-${VERSION}.aar" ] && [ -s "${ARTIFACT}-${VERSION}.aar" ]; then
+            echo "✅ wget دانلود موفق" >> wget-log.txt
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ wget دانلود ناموفق" >> wget-log.txt
+            echo "success=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Copy AAR file (if downloaded by Maven)
+        if: steps.download.outcome == 'success'
+        run: |
+          cd output
+          if ls *.aar 1> /dev/null 2>&1; then
+            AAR_FILE=$(ls *.aar 2>/dev/null | head -1)
+            cp "$AAR_FILE" ../${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}.aar
+            echo "✅ Maven دانلود شد: ${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}.aar"
+          else
+            echo "⚠️ Maven موفق بود ولی فایل AAR پیدا نشد"
+            exit 1
+          fi
+          cd ..
+
+      - name: Use wget file if Maven failed
+        if: steps.download.outcome != 'success' && steps.wget.outputs.success == 'true'
+        run: |
+          if [ -f "${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}.aar" ]; then
+            echo "✅ استفاده از فایل دانلود شده با wget"
+          else
+            echo "❌ هیچ فایلی موجود نیست"
+            exit 1
+          fi
+
+      - name: Upload debug logs as Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-logs-${{ github.run_number }}
+          path: |
+            debug-logs/
+            maven-error.log
+            wget-log.txt
+            pom.xml
+          retention-days: 7
+
+      - name: Upload AAR to Release (در صورت موفقیت)
+        if: success() && (steps.download.outcome == 'success' || steps.wget.outputs.success == 'true')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./*.aar
+          tag_name: aar-${{ github.run_number }}
+          name: "${{ steps.parse.outputs.artifact }} v${{ steps.parse.outputs.version }}"
+          body: |
+            **Dependency:** `${{ github.event.inputs.dependency }}`
+            **Download method:** ${{ steps.download.outcome == 'success' && 'Maven' || 'wget' }}
+            **Status:** ✅ موفق
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload AAR as Artifact (در صورت موفقیت)
+        if: success() && (steps.download.outcome == 'success' || steps.wget.outputs.success == 'true')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}
+          path: ./*.aar
+
+      - name: Show error summary (در صورت خطا)
+        if: failure() || steps.download.outcome != 'success'
+        run: |
+          echo "## ❌ خطا در دانلود" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Dependency:** \`${{ github.event.inputs.dependency }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Maven status:** ${{ steps.download.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "**wget status:** ${{ steps.wget.outputs.success }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### آخرین خطاهای Maven:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 maven-error.log 2>/dev/null || echo "No maven error log" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### اطلاعات بیشتر در Artifact **debug-logs-${{ github.run_number }}** موجود است" >> $GITHUB_STEP_SUMMARY
