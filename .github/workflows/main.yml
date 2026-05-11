@@ -1,0 +1,87 @@
+name: Download Any AAR from Maven
+
+on:
+  workflow_dispatch:
+    inputs:
+      dependency:
+        description: 'Maven dependency (مثال: com.squareup.picasso:picasso:2.8)'
+        required: true
+        default: 'com.squareup.picasso:picasso:2.8'
+        type: string
+      output_name:
+        description: 'نام فایل خروجی (اختیاری)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  download-aar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Parse dependency string
+        id: parse
+        run: |
+          DEP="${{ github.event.inputs.dependency }}"
+          # جدا کردن groupId, artifactId, version
+          GROUP=$(echo $DEP | cut -d':' -f1)
+          ARTIFACT=$(echo $DEP | cut -d':' -f2)
+          VERSION=$(echo $DEP | cut -d':' -f3)
+          
+          # ساخت نام فایل
+          if [ -z "${{ github.event.inputs.output_name }}" ]; then
+            OUTPUT_FILE="${ARTIFACT}-${VERSION}.aar"
+          else
+            OUTPUT_FILE="${{ github.event.inputs.output_name }}.aar"
+          fi
+          
+          echo "group=$GROUP" >> $GITHUB_OUTPUT
+          echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "output_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+
+      - name: Download AAR from Maven
+        run: |
+          mvn dependency:get \
+            -Dartifact=${{ steps.parse.outputs.group }}:${{ steps.parse.outputs.artifact }}:${{ steps.parse.outputs.version }} \
+            -Ddest=./${{ steps.parse.outputs.output_file }}
+          
+          echo "✅ فایل دانلود شد: ${{ steps.parse.outputs.output_file }}"
+
+      - name: Verify AAR file
+        run: |
+          if [ -f "./${{ steps.parse.outputs.output_file }}" ]; then
+            echo "📦 حجم فایل:"
+            ls -lh ./${{ steps.parse.outputs.output_file }}
+            file ./${{ steps.parse.outputs.output_file }}
+          else
+            echo "❌ فایل پیدا نشد!"
+            exit 1
+          fi
+
+      - name: Upload AAR to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./${{ steps.parse.outputs.output_file }}
+          tag_name: aar-${{ github.run_number }}
+          name: "AAR - ${{ steps.parse.outputs.artifact }} v${{ steps.parse.outputs.version }}"
+          body: |
+            دانلود شده از: `${{ github.event.inputs.dependency }}`
+            زمان: ${{ github.event.repository.updated_at }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload as Artifact (برای دانلود مستقیم)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.parse.outputs.artifact }}-${{ steps.parse.outputs.version }}
+          path: ./${{ steps.parse.outputs.output_file }}
